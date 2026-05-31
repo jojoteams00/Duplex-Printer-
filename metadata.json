@@ -1,0 +1,6 @@
+{
+  "name": "Duplex Printer",
+  "description": "Premium manual double-sided (duplex) printing splitter. Accepts PDF, Word (DOCX), Excel (XLSX), and PowerPoint (PPTX) files and splits them into clean Odd/Even PDF sheets ready for easy manual duplex printing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
