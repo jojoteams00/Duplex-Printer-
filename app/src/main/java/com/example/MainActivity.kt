@@ -49,6 +49,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -129,6 +131,22 @@ class SplitViewModel : ViewModel() {
         }
     }
 
+    fun clearAllHistory(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val splitsDir = File(context.filesDir, "splits")
+            if (splitsDir.exists()) {
+                splitsDir.deleteRecursively()
+            }
+            _history.value = emptyList()
+            
+            // If current active split is active, reset state
+            val current = _splitState.value
+            if (current is SplitState.Success) {
+                _splitState.value = SplitState.Idle
+            }
+        }
+    }
+
     fun splitPdf(context: Context, uri: Uri) {
         _splitState.value = SplitState.Processing
         viewModelScope.launch(Dispatchers.Default) {
@@ -175,29 +193,39 @@ class SplitViewModel : ViewModel() {
                 var oddCount = 0
                 var evenCount = 0
 
+                val scaleFactor = 4.0f
+                val paint = android.graphics.Paint().apply {
+                    isFilterBitmap = true
+                    isAntiAlias = true
+                }
+
                 for (i in 0 until totalPages) {
                     val page = renderer.openPage(i)
                     val width = page.width
                     val height = page.height
 
-                    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                    val scaledWidth = (width * scaleFactor).toInt()
+                    val scaledHeight = (height * scaleFactor).toInt()
+
+                    val bitmap = Bitmap.createBitmap(scaledWidth, scaledHeight, Bitmap.Config.ARGB_8888)
                     val canvas = Canvas(bitmap)
                     canvas.drawColor(android.graphics.Color.WHITE)
 
                     page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
                     page.close()
 
+                    val rect = android.graphics.Rect(0, 0, width, height)
                     val isOdd = (i + 1) % 2 != 0
                     if (isOdd) {
                         val pageInfo = PdfDocument.PageInfo.Builder(width, height, oddCount).create()
                         val newPage = oddDocument.startPage(pageInfo)
-                        newPage.canvas.drawBitmap(bitmap, 0f, 0f, null)
+                        newPage.canvas.drawBitmap(bitmap, null, rect, paint)
                         oddDocument.finishPage(newPage)
                         oddCount++
                     } else {
                         val pageInfo = PdfDocument.PageInfo.Builder(width, height, evenCount).create()
                         val newPage = evenDocument.startPage(pageInfo)
-                        newPage.canvas.drawBitmap(bitmap, 0f, 0f, null)
+                        newPage.canvas.drawBitmap(bitmap, null, rect, paint)
                         evenDocument.finishPage(newPage)
                         evenCount++
                     }
@@ -1038,6 +1066,7 @@ fun MainScreen(
                     },
                     onSelectRecord = { viewModel.selectHistoryRecord(it) },
                     onDeleteRecord = { viewModel.deleteRecord(context, it) },
+                    onClearAll = { viewModel.clearAllHistory(context) },
                     onPrint = { printPdfFile(context, it) },
                     onShare = { sharePdfFile(context, it) },
                     onDownload = { downloadPdfFile(context, it) }
@@ -1186,16 +1215,17 @@ fun HeaderBlock() {
             // High-fidelity App Launcher Icon Custom visual integration next to Title
             Box(
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.White)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_launcher_foreground),
-                    contentDescription = "Duplex Printer Adaptive Icon logo",
-                    tint = Color.Unspecified, // displays original blue/green vector colors perfectly
-                    modifier = Modifier.size(48.dp)
+                Image(
+                    painter = painterResource(id = R.drawable.img_logo),
+                    contentDescription = "Duplex Printer logo",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit
                 )
             }
             Spacer(modifier = Modifier.width(14.dp))
@@ -1310,6 +1340,7 @@ fun PdfSplitterTab(
     onSelectFile: () -> Unit,
     onSelectRecord: (SplitRecord) -> Unit,
     onDeleteRecord: (SplitRecord) -> Unit,
+    onClearAll: () -> Unit,
     onPrint: (File) -> Unit,
     onShare: (File) -> Unit,
     onDownload: (File) -> Unit
@@ -1331,12 +1362,29 @@ fun PdfSplitterTab(
 
                     if (history.isNotEmpty()) {
                         item {
-                            Text(
-                                text = "Previous Page Splits",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Previous Page Splits",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                                TextButton(
+                                    onClick = onClearAll,
+                                    modifier = Modifier.testTag("clear_all_button")
+                                ) {
+                                    Text(
+                                        text = "Clear All",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
                         }
 
                         items(history) { record ->
@@ -1870,7 +1918,7 @@ fun SplitPartCard(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Button(
@@ -1880,45 +1928,78 @@ fun SplitPartCard(
                         .testTag("print_${stepNumber}"),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                    contentPadding = PaddingValues(vertical = 6.bentoPaddingVertical())
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
                 ) {
-                    Text(
-                        text = "PRINT",
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold),
-                        color = Color.White
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Print,
+                            contentDescription = "Print icon",
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "PRINT",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold, fontSize = 9.sp),
+                            color = Color.White
+                        )
+                    }
                 }
 
-                IconButton(
+                Button(
                     onClick = onShare,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .size(36.dp)
-                        .testTag("share_${stepNumber}")
+                        .weight(1f)
+                        .testTag("share_${stepNumber}"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.Share,
-                        contentDescription = "Share file",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp)
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Share,
+                            contentDescription = "Share icon",
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "SHARE",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold, fontSize = 9.sp),
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
                 }
 
-                IconButton(
+                Button(
                     onClick = onDownload,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
-                        .size(36.dp)
-                        .testTag("download_${stepNumber}")
+                        .weight(1f)
+                        .testTag("download_${stepNumber}"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Download file",
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.size(18.dp)
-                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = "Download icon",
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "DOWNLOAD",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.ExtraBold, fontSize = 9.sp),
+                            color = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
                 }
             }
         }
